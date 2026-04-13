@@ -38,6 +38,12 @@
     const XCircle = ({ className }) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
     );
+    const Shuffle = ({ className }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
+    );
+    const ArrowLeft = ({ className }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+    );
 
     // 完整的 37 個注音符號
     const ZHUYIN_LIST = [
@@ -60,17 +66,19 @@
     };
 
     function App() {
-      const [gameState, setGameState] = useState('start'); // 'start', 'playing', 'ended'
+      const [gameState, setGameState] = useState('start'); // 'start', 'playing'
+      const [gameMode, setGameMode] = useState('full'); // 'full' (全套), 'random' (隨機)
       const [targetZhuyin, setTargetZhuyin] = useState('');
       const [options, setOptions] = useState([]);
       const [score, setScore] = useState(0);
       const [wrongCount, setWrongCount] = useState(0);
       const [feedback, setFeedback] = useState(null); // 'correct', 'wrong', null
       const [isSpeaking, setIsSpeaking] = useState(false);
+      const [remainingCount, setRemainingCount] = useState(0);
       
-      // 用來記錄「還沒考過」的注音牌組
-      const [questionDeck, setQuestionDeck] = useState([]);
-      
+      // 使用 useRef 來管理狀態，避免 setTimeout 造成的閉包過期問題
+      const isPlayingRef = useRef(false);
+      const questionDeckRef = useRef([]);
       const correctAudioRef = useRef(null);
       const wrongAudioRef = useRef(null);
 
@@ -119,24 +127,29 @@
       }, []);
 
       // 產生新題目
-      const generateQuestion = useCallback((currentDeck) => {
-        // 優先使用傳入的 deck，如果沒有就使用 state 裡的 deck
-        let deckToUse = currentDeck !== undefined ? currentDeck : questionDeck;
+      const generateQuestion = useCallback((modeParam) => {
+        // 如果使用者已經離開遊戲畫面，就不繼續出題
+        if (!isPlayingRef.current) return;
+
+        const currentMode = modeParam || gameMode;
+        let target;
         
-        // 如果這輪 37 個注音都考完了，就重新洗牌產生新的一輪
-        if (deckToUse.length === 0) {
-          deckToUse = shuffleArray(ZHUYIN_LIST);
+        if (currentMode === 'full') {
+          // 全套練習模式：從牌組抽出
+          if (questionDeckRef.current.length === 0) {
+            questionDeckRef.current = shuffleArray(ZHUYIN_LIST);
+          }
+          target = questionDeckRef.current[0];
+          questionDeckRef.current = questionDeckRef.current.slice(1);
+          setRemainingCount(questionDeckRef.current.length);
+        } else {
+          // 隨機練習模式：從 37 個裡面純隨機抽
+          target = ZHUYIN_LIST[Math.floor(Math.random() * ZHUYIN_LIST.length)];
         }
 
-        // 取出牌組裡的第一個當作這題的正確答案
-        const target = deckToUse[0];
-        const remainingDeck = deckToUse.slice(1); // 剩下的牌組
-        
-        // 更新牌組狀態
-        setQuestionDeck(remainingDeck);
         setTargetZhuyin(target);
         
-        // 挑選 3 個錯誤答案 (錯誤答案依然從全部 37 個裡面隨機挑，避免選項太單調)
+        // 挑選 3 個錯誤答案
         let wrongOptions = [];
         while (wrongOptions.length < 3) {
           const randomWrong = ZHUYIN_LIST[Math.floor(Math.random() * ZHUYIN_LIST.length)];
@@ -153,29 +166,40 @@
         
         // 延遲一點點播放聲音，讓畫面先準備好
         setTimeout(() => {
-          speakZhuyin(target);
+          if (isPlayingRef.current) speakZhuyin(target);
         }, 500);
-      }, [speakZhuyin, questionDeck]);
+      }, [gameMode, speakZhuyin]);
 
       // 開始遊戲
-      const startGame = () => {
+      const startGame = (mode) => {
         // 確保在第一次點擊時解鎖音效 (解決某些手機瀏覽器的限制)
         if (correctAudioRef.current) correctAudioRef.current.load();
         if (wrongAudioRef.current) wrongAudioRef.current.load();
         
+        setGameMode(mode);
         setScore(0);
         setWrongCount(0);
+        isPlayingRef.current = true;
         setGameState('playing');
         
-        // 遊戲開始時，產生第一次的洗牌牌組並出題
-        const initialDeck = shuffleArray(ZHUYIN_LIST);
-        setQuestionDeck(initialDeck);
-        generateQuestion(initialDeck);
+        if (mode === 'full') {
+          questionDeckRef.current = shuffleArray(ZHUYIN_LIST);
+          setRemainingCount(questionDeckRef.current.length);
+        }
+
+        generateQuestion(mode);
+      };
+
+      // 回到首頁切換模式
+      const handleBackToHome = () => {
+        isPlayingRef.current = false;
+        setGameState('start');
+        window.speechSynthesis.cancel(); // 停止講話
       };
 
       // 處理玩家選擇
       const handleOptionClick = (selected) => {
-        if (feedback !== null) return; // 防止重複點擊
+        if (feedback !== null || !isPlayingRef.current) return; // 防止重複點擊或已離開
 
         if (selected === targetZhuyin) {
           setFeedback('correct');
@@ -184,12 +208,12 @@
           
           // 等 MP3 播放一小段時間後，再唸一次正確的發音
           setTimeout(() => {
-            speakZhuyin(targetZhuyin);
+            if (isPlayingRef.current) speakZhuyin(targetZhuyin);
           }, 800);
           
           // 稍微延後一點，讓語音唸完再進入下一題
           setTimeout(() => {
-            generateQuestion();
+            if (isPlayingRef.current) generateQuestion();
           }, 2500);
         } else {
           setFeedback('wrong');
@@ -198,9 +222,10 @@
           
           // 答錯後，抖動一下提示再恢復
           setTimeout(() => {
-            setFeedback(null);
-            // 答錯可以再聽一次聲音
-            speakZhuyin(targetZhuyin);
+            if (isPlayingRef.current) {
+              setFeedback(null);
+              speakZhuyin(targetZhuyin); // 答錯可以再聽一次聲音
+            }
           }, 1500);
         }
       };
@@ -211,7 +236,18 @@
             
             {/* 標題列 */}
             <div className="bg-sky-400 p-4 text-center text-white relative">
-              <h1 className="text-3xl font-bold tracking-wider mb-3">聽音找ㄅㄆㄇ</h1>
+              {gameState === 'playing' && (
+                <button
+                  onClick={handleBackToHome}
+                  className="absolute left-4 top-4 p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors active:scale-95"
+                  title="回首頁"
+                >
+                  <ArrowLeft className="w-6 h-6" />
+                </button>
+              )}
+              
+              <h1 className="text-3xl font-bold tracking-wider mb-3 mt-1">聽音找ㄅㄆㄇ</h1>
+              
               {gameState === 'playing' && (
                 <div className="flex flex-col items-center">
                   <div className="flex justify-center space-x-6 bg-white/20 rounded-full py-2 px-4 shadow-inner max-w-[250px] mx-auto">
@@ -225,26 +261,47 @@
                       <span className="text-2xl">{wrongCount}</span>
                     </div>
                   </div>
-                  <p className="text-sm mt-2 text-sky-100">剩餘 {questionDeck.length} 個未練習</p>
+                  
+                  {/* 模式提示文字 */}
+                  {gameMode === 'full' ? (
+                    <p className="text-sm mt-2 text-yellow-100 font-bold tracking-wide">
+                      剩餘 {remainingCount} 個未練習
+                    </p>
+                  ) : (
+                    <p className="text-sm mt-2 text-purple-100 font-bold tracking-wide flex items-center justify-center">
+                      <Shuffle className="w-4 h-4 mr-1" /> 隨機無限模式
+                    </p>
+                  )}
                 </div>
               )}
             </div>
 
             <div className="p-6">
-              {/* 開始畫面 */}
+              {/* 開始畫面：選擇模式 */}
               {gameState === 'start' && (
-                <div className="flex flex-col items-center justify-center space-y-8 py-10">
-                  <div className="text-8xl animate-bounce">👂</div>
-                  <p className="text-xl text-gray-600 text-center font-bold">
+                <div className="flex flex-col items-center justify-center space-y-6 py-6 w-full">
+                  <div className="text-8xl animate-bounce mb-2">👂</div>
+                  <p className="text-xl text-gray-600 text-center font-bold mb-4">
                     打開喇叭，聽聲音，<br/>選出正確的注音符號喔！
                   </p>
-                  <button
-                    onClick={startGame}
-                    className="flex items-center justify-center w-full py-4 bg-green-500 hover:bg-green-600 text-white rounded-2xl text-2xl font-bold shadow-lg transform transition active:scale-95"
-                  >
-                    <Play className="w-8 h-8 mr-2" />
-                    開始遊戲
-                  </button>
+                  
+                  <div className="w-full space-y-4">
+                    <button
+                      onClick={() => startGame('full')}
+                      className="flex items-center justify-center w-full py-4 bg-green-500 hover:bg-green-600 text-white rounded-2xl text-2xl font-bold shadow-lg transform transition active:scale-95"
+                    >
+                      <Play className="w-8 h-8 mr-2" />
+                      全套練習 (37字)
+                    </button>
+                    
+                    <button
+                      onClick={() => startGame('random')}
+                      className="flex items-center justify-center w-full py-4 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl text-2xl font-bold shadow-lg transform transition active:scale-95"
+                    >
+                      <Shuffle className="w-7 h-7 mr-2" />
+                      隨機練習 (無限)
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -256,7 +313,7 @@
                   <button
                     onClick={() => speakZhuyin(targetZhuyin)}
                     disabled={isSpeaking}
-                    className={`relative w-32 h-32 flex items-center justify-center rounded-full shadow-lg transition-transform ${
+                    className={`relative w-32 h-32 flex items-center justify-center rounded-full shadow-lg transition-transform mt-2 ${
                       isSpeaking 
                         ? 'bg-yellow-300 scale-110 animate-pulse' 
                         : 'bg-yellow-400 hover:bg-yellow-300 active:scale-95'
