@@ -23,7 +23,7 @@
 
   <!-- React 程式碼 -->
   <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef } = React;
+    const { useState, useEffect, useCallback, useRef, useMemo } = React;
 
     // 將原本 lucide-react 的圖示替換為行內 SVG，這樣就不需要打包工具
     const Play = ({ className }) => (
@@ -65,7 +65,325 @@
       return arr;
     };
 
+    // ====== 單字練習 / 檢測 共用資料與工具 ======
+
+    // 念出文字（中文字、注音符號、整個詞都用這個）
+    const speak = (text, rate = 0.8) => {
+      if (!('speechSynthesis' in window)) {
+        alert("您的瀏覽器不支援語音功能喔！");
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'zh-TW';
+      u.rate = rate;
+      u.pitch = 1.15;
+      window.speechSynthesis.speak(u);
+    };
+
+    // 五個聲調（一聲不標符號，輕聲標在前）
+    const TONES = [
+      { mark: 'ˉ', label: '一聲' },
+      { mark: 'ˊ', label: '二聲' },
+      { mark: 'ˇ', label: '三聲' },
+      { mark: 'ˋ', label: '四聲' },
+      { mark: '˙', label: '輕聲' },
+    ];
+
+    // 把一個字的注音符號 + 聲調組成顯示字串
+    const renderSyllable = (symbols, tone) => {
+      const base = symbols.join('');
+      if (tone === '˙') return '˙' + base;     // 輕聲標在前面
+      if (tone === 'ˉ' || !tone) return base;   // 一聲不標
+      return base + tone;                       // 二三四聲標在後面
+    };
+
+    // 單字清單：emoji + 每個字拆成注音符號與聲調（之後可自行增刪）
+    const WORD_LIST = [
+      { emoji: '💻', word: '電腦', chars: [
+          { ch: '電', symbols: ['ㄉ','ㄧ','ㄢ'], tone: 'ˋ' },
+          { ch: '腦', symbols: ['ㄋ','ㄠ'], tone: 'ˇ' } ] },
+      { emoji: '📱', word: '手機', chars: [
+          { ch: '手', symbols: ['ㄕ','ㄡ'], tone: 'ˇ' },
+          { ch: '機', symbols: ['ㄐ','ㄧ'], tone: 'ˉ' } ] },
+      { emoji: '🥤', word: '杯子', chars: [
+          { ch: '杯', symbols: ['ㄅ','ㄟ'], tone: 'ˉ' },
+          { ch: '子', symbols: ['ㄗ'], tone: '˙' } ] },
+      { emoji: '🍎', word: '蘋果', chars: [
+          { ch: '蘋', symbols: ['ㄆ','ㄧ','ㄥ'], tone: 'ˊ' },
+          { ch: '果', symbols: ['ㄍ','ㄨ','ㄛ'], tone: 'ˇ' } ] },
+      { emoji: '🍌', word: '香蕉', chars: [
+          { ch: '香', symbols: ['ㄒ','ㄧ','ㄤ'], tone: 'ˉ' },
+          { ch: '蕉', symbols: ['ㄐ','ㄧ','ㄠ'], tone: 'ˉ' } ] },
+      { emoji: '🍉', word: '西瓜', chars: [
+          { ch: '西', symbols: ['ㄒ','ㄧ'], tone: 'ˉ' },
+          { ch: '瓜', symbols: ['ㄍ','ㄨ','ㄚ'], tone: 'ˉ' } ] },
+      { emoji: '☀️', word: '太陽', chars: [
+          { ch: '太', symbols: ['ㄊ','ㄞ'], tone: 'ˋ' },
+          { ch: '陽', symbols: ['ㄧ','ㄤ'], tone: 'ˊ' } ] },
+      { emoji: '☂️', word: '雨傘', chars: [
+          { ch: '雨', symbols: ['ㄩ'], tone: 'ˇ' },
+          { ch: '傘', symbols: ['ㄙ','ㄢ'], tone: 'ˇ' } ] },
+      { emoji: '🐱', word: '貓咪', chars: [
+          { ch: '貓', symbols: ['ㄇ','ㄠ'], tone: 'ˉ' },
+          { ch: '咪', symbols: ['ㄇ','ㄧ'], tone: 'ˉ' } ] },
+      { emoji: '🍰', word: '蛋糕', chars: [
+          { ch: '蛋', symbols: ['ㄉ','ㄢ'], tone: 'ˋ' },
+          { ch: '糕', symbols: ['ㄍ','ㄠ'], tone: 'ˉ' } ] },
+    ];
+
+    // 共用外框（標題 + 回主選單）
+    function Shell({ title, color, onBack, children }) {
+      const bg = { green: 'bg-green-400', orange: 'bg-orange-400' }[color] || 'bg-sky-400';
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4 font-sans touch-manipulation">
+          <div className="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden border-4 border-sky-300">
+            <div className={`${bg} p-4 text-center text-white relative`}>
+              <button
+                onClick={onBack}
+                className="absolute left-4 top-1/2 -translate-y-1/2 p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors active:scale-95"
+                title="回主選單"
+              >
+                <ArrowLeft className="w-6 h-6" />
+              </button>
+              <h1 className="text-2xl font-bold tracking-wider">{title}</h1>
+            </div>
+            <div className="p-5">{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    // 主選單
+    function HomeMenu({ onSelect }) {
+      const items = [
+        { key: 'zhuyin', emoji: '👂', label: '聽音找ㄅㄆㄇ', color: 'bg-sky-500 hover:bg-sky-600' },
+        { key: 'practice', emoji: '📖', label: '單字練習', color: 'bg-green-500 hover:bg-green-600' },
+        { key: 'test', emoji: '✏️', label: '單字檢測', color: 'bg-orange-500 hover:bg-orange-600' },
+      ];
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4 font-sans touch-manipulation">
+          <div className="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden border-4 border-sky-300">
+            <div className="bg-sky-400 p-5 text-center text-white">
+              <h1 className="text-3xl font-bold tracking-wider">注音小學堂</h1>
+              <p className="text-sky-100 mt-1 font-bold">選一個來玩玩看吧！</p>
+            </div>
+            <div className="p-6 space-y-4">
+              {items.map(it => (
+                <button
+                  key={it.key}
+                  onClick={() => onSelect(it.key)}
+                  className={`flex items-center w-full py-5 px-5 ${it.color} text-white rounded-2xl text-2xl font-bold shadow-lg active:scale-95 transition`}
+                >
+                  <span className="text-3xl mr-3">{it.emoji}</span> {it.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 練習模式：看圖、點圖唸詞、點字唸字、點注音唸單音
+    function PracticeMode({ onBack }) {
+      const [idx, setIdx] = useState(0);
+      const word = WORD_LIST[idx];
+      const next = () => setIdx(i => (i + 1) % WORD_LIST.length);
+      const prev = () => setIdx(i => (i - 1 + WORD_LIST.length) % WORD_LIST.length);
+
+      return (
+        <Shell title="單字練習" color="green" onBack={onBack}>
+          <p className="text-center text-gray-500 font-bold mb-1 text-sm">
+            點圖片唸整個詞 · 點國字唸一個字 · 點注音唸單音
+          </p>
+          <button
+            onClick={() => speak(word.word)}
+            className="mx-auto block text-8xl my-3 active:scale-90 transition"
+            title="唸整個詞"
+          >
+            {word.emoji}
+          </button>
+          <p className="text-center text-2xl font-bold text-gray-700 mb-4">{word.word}</p>
+
+          <div className="flex justify-center gap-4 flex-wrap">
+            {word.chars.map((c, ci) => (
+              <div key={ci} className="bg-green-50 border-2 border-green-200 rounded-2xl p-3 flex flex-col items-center">
+                <button
+                  onClick={() => speak(c.ch)}
+                  className="text-5xl font-bold text-gray-800 mb-2 active:scale-90 transition"
+                  title="唸這個字"
+                >
+                  {c.ch}
+                </button>
+                <div className="flex items-end gap-1">
+                  {c.symbols.map((s, si) => (
+                    <button
+                      key={si}
+                      onClick={() => speak(s)}
+                      className="text-3xl font-bold text-green-700 bg-white rounded-lg px-2 py-1 border border-green-200 active:scale-90 transition"
+                      title="唸這個音"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                  <span className="text-2xl text-pink-500 font-bold ml-0.5">{c.tone === 'ˉ' ? '' : c.tone}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-between items-center mt-8 gap-3">
+            <button onClick={prev} className="flex-1 py-3 bg-gray-200 hover:bg-gray-300 rounded-xl text-xl font-bold active:scale-95 transition">◀ 上一個</button>
+            <span className="text-gray-400 font-bold">{idx + 1}/{WORD_LIST.length}</span>
+            <button onClick={next} className="flex-1 py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl text-xl font-bold active:scale-95 transition">下一個 ▶</button>
+          </div>
+        </Shell>
+      );
+    }
+
+    // 檢測：每個格子顯示填入的符號 / 聲調，並依狀態變色
+    function Box({ value, answer, active, checked, tone, onClick }) {
+      let cls = 'border-gray-300 bg-white text-gray-700';
+      if (checked) cls = value === answer ? 'border-green-400 bg-green-100 text-green-700' : 'border-red-400 bg-red-100 text-red-500';
+      else if (active) cls = 'border-orange-400 bg-orange-100 ring-2 ring-orange-300 text-orange-700';
+      else if (value) cls = 'border-sky-300 bg-sky-50 text-sky-700';
+      const size = tone ? 'w-9 h-12' : 'w-12 h-14';
+      const textSize = tone ? 'text-xl' : 'text-3xl';
+      const display = value ? (tone && value === 'ˉ' ? '一' : value) : '';
+      return (
+        <button onClick={onClick} className={`${size} ${textSize} font-bold rounded-lg border-2 flex items-center justify-center transition active:scale-90 ${cls}`}>
+          {display}
+        </button>
+      );
+    }
+
+    // 檢測模式：看國字，從選項拼出注音 + 聲調
+    function TestMode({ onBack }) {
+      const [idx, setIdx] = useState(0);
+      const word = WORD_LIST[idx];
+
+      // 把整個詞攤平成一連串「格子」：每個字 = N 個符號格 + 1 個聲調格
+      const blanks = useMemo(() => {
+        const arr = [];
+        word.chars.forEach((c) => {
+          c.symbols.forEach((s) => arr.push({ ci: c, type: 'sym', answer: s }));
+          arr.push({ ci: c, type: 'tone', answer: c.tone });
+        });
+        return arr;
+      }, [idx]);
+
+      const [filled, setFilled] = useState(() => blanks.map(() => null));
+      const [checked, setChecked] = useState(false);
+      const [score, setScore] = useState(0);
+
+      // 換題時重置作答
+      useEffect(() => { setFilled(blanks.map(() => null)); setChecked(false); }, [idx]);
+
+      // 每個符號格的選項（固定，不隨 render 變動）
+      const symOptions = useMemo(() => blanks.map(b => {
+        if (b.type !== 'sym') return null;
+        const opts = [b.answer];
+        while (opts.length < 4) {
+          const r = ZHUYIN_LIST[Math.floor(Math.random() * ZHUYIN_LIST.length)];
+          if (!opts.includes(r)) opts.push(r);
+        }
+        return shuffleArray(opts);
+      }), [idx]);
+
+      const activeIdx = checked ? -1 : filled.findIndex(v => v === null);
+      const allRight = checked && filled.every((v, i) => v === blanks[i].answer);
+
+      const pick = (val) => {
+        if (activeIdx === -1) return;
+        const nf = [...filled];
+        nf[activeIdx] = val;
+        setFilled(nf);
+        if (nf.every(v => v !== null)) {
+          setChecked(true);
+          if (nf.every((v, i) => v === blanks[i].answer)) setScore(s => s + 1);
+          speak(word.word);
+        }
+      };
+
+      const clearAt = (i) => { if (!checked) { const nf = [...filled]; nf[i] = null; setFilled(nf); } };
+      const retry = () => { setFilled(blanks.map(() => null)); setChecked(false); };
+      const nextWord = () => setIdx(i => (i + 1) % WORD_LIST.length);
+
+      // 依字分組畫格子，用 g 追蹤全域格子索引
+      let g = -1;
+
+      return (
+        <Shell title="單字檢測" color="orange" onBack={onBack}>
+          <div className="flex justify-center items-center gap-3 mb-2 text-gray-500 font-bold text-sm">
+            <span className="text-green-500">✅ {score}</span><span>·</span><span>第 {idx + 1}/{WORD_LIST.length} 題</span>
+          </div>
+          <button onClick={() => speak(word.word)} className="mx-auto block text-7xl mb-1 active:scale-90 transition" title="聽一次">{word.emoji}</button>
+          <p className="text-center text-gray-500 font-bold mb-4 text-sm">看「{word.word}」，把注音和聲調拼出來</p>
+
+          <div className="flex justify-center gap-5 flex-wrap mb-5">
+            {word.chars.map((c, ci) => (
+              <div key={ci} className="flex flex-col items-center">
+                <div className="text-4xl font-bold text-gray-800 mb-2">{c.ch}</div>
+                <div className="flex items-end gap-1">
+                  {c.symbols.map((s, si) => {
+                    g++; const gi = g;
+                    return <Box key={'s' + si} value={filled[gi]} answer={blanks[gi].answer} active={activeIdx === gi} checked={checked} onClick={() => clearAt(gi)} />;
+                  })}
+                  {(() => {
+                    g++; const gi = g;
+                    return <Box key="t" value={filled[gi]} answer={blanks[gi].answer} active={activeIdx === gi} checked={checked} tone onClick={() => clearAt(gi)} />;
+                  })()}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {!checked && activeIdx !== -1 && (
+            <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+              <p className="text-center text-orange-600 font-bold mb-3">
+                {blanks[activeIdx].type === 'tone' ? '👉 選聲調' : '👉 選注音符號'}
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {blanks[activeIdx].type === 'tone'
+                  ? TONES.map(t => (
+                      <button key={t.mark} onClick={() => pick(t.mark)} className="px-3 py-2 bg-white border-2 border-orange-300 rounded-xl active:scale-90 transition">
+                        <span className="text-2xl text-pink-500 font-bold">{t.mark === 'ˉ' ? '一' : t.mark}</span>
+                        <span className="block text-xs text-gray-400">{t.label}</span>
+                      </button>
+                    ))
+                  : symOptions[activeIdx].map((o, oi) => (
+                      <button key={oi} onClick={() => pick(o)} className="w-16 h-16 bg-white border-2 border-orange-300 rounded-xl text-3xl font-bold text-orange-700 active:scale-90 transition">{o}</button>
+                    ))
+                }
+              </div>
+            </div>
+          )}
+
+          {checked && (
+            <div className="text-center">
+              <p className={`text-2xl font-bold mb-2 ${allRight ? 'text-green-500' : 'text-red-400'}`}>
+                {allRight ? '✨ 全對！太棒了！' : '差一點，看看正解！'}
+              </p>
+              {!allRight && (
+                <p className="text-xl font-bold text-gray-600 mb-3">
+                  正解：
+                  {word.chars.map((c, i) => (
+                    <span key={i} className="mx-1">{c.ch} {renderSyllable(c.symbols, c.tone)}</span>
+                  ))}
+                </p>
+              )}
+              <div className="flex gap-3">
+                <button onClick={retry} className="flex-1 py-3 bg-gray-200 hover:bg-gray-300 rounded-xl text-lg font-bold active:scale-95 transition">再做一次</button>
+                <button onClick={nextWord} className="flex-1 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-lg font-bold active:scale-95 transition">下一題 ▶</button>
+              </div>
+            </div>
+          )}
+        </Shell>
+      );
+    }
+
     function App() {
+      const [view, setView] = useState('home'); // 'home', 'zhuyin', 'practice', 'test'
       const [gameState, setGameState] = useState('start'); // 'start', 'playing'
       const [gameMode, setGameMode] = useState('full'); // 'full' (全套), 'random' (隨機)
       const [targetZhuyin, setTargetZhuyin] = useState('');
@@ -230,21 +548,25 @@
         }
       };
 
+      // 主選單與兩個新模式
+      if (view === 'home') return <HomeMenu onSelect={setView} />;
+      if (view === 'practice') return <PracticeMode onBack={() => setView('home')} />;
+      if (view === 'test') return <TestMode onBack={() => setView('home')} />;
+
+      // 以下為原本的「聽音找ㄅㄆㄇ」遊戲
       return (
         <div className="min-h-screen flex items-center justify-center p-4 font-sans touch-manipulation">
           <div className="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden border-4 border-sky-300">
-            
+
             {/* 標題列 */}
             <div className="bg-sky-400 p-4 text-center text-white relative">
-              {gameState === 'playing' && (
-                <button
-                  onClick={handleBackToHome}
-                  className="absolute left-4 top-4 p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors active:scale-95"
-                  title="回首頁"
-                >
-                  <ArrowLeft className="w-6 h-6" />
-                </button>
-              )}
+              <button
+                onClick={gameState === 'playing' ? handleBackToHome : () => setView('home')}
+                className="absolute left-4 top-4 p-2 bg-black/10 hover:bg-black/20 rounded-full transition-colors active:scale-95"
+                title={gameState === 'playing' ? '回模式選擇' : '回主選單'}
+              >
+                <ArrowLeft className="w-6 h-6" />
+              </button>
               
               <h1 className="text-3xl font-bold tracking-wider mb-3 mt-1">聽音找ㄅㄆㄇ</h1>
               
