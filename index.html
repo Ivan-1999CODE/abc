@@ -323,11 +323,11 @@
           <div className="flex justify-center gap-5 flex-wrap mb-5">
             {word.chars.map((c, ci) => (
               <div key={ci} className="flex flex-col items-center">
-                <div className="text-4xl font-bold text-gray-800 mb-2">{c.ch}</div>
+                <button onClick={() => speak(c.ch)} className="text-4xl font-bold text-gray-800 mb-2 active:scale-90 transition" title="唸這個字">{c.ch}</button>
                 <div className="flex items-end gap-1">
                   {c.symbols.map((s, si) => {
                     g++; const gi = g;
-                    return <Box key={'s' + si} value={filled[gi]} answer={blanks[gi].answer} active={activeIdx === gi} checked={checked} onClick={() => clearAt(gi)} />;
+                    return <Box key={'s' + si} value={filled[gi]} answer={blanks[gi].answer} active={activeIdx === gi} checked={checked} onClick={() => { speak(filled[gi] || blanks[gi].answer); clearAt(gi); }} />;
                   })}
                   {(() => {
                     g++; const gi = g;
